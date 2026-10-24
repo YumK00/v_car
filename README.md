@@ -56,7 +56,6 @@
 ```text
 v_car/
 ├── CMakeLists.txt          # 构建脚本：Qt6/Qt5 兼容写法、C++17、AUTOUIC/AUTOMOC/AUTORCC、链接 qmqtt
-├── CMakeLists.txt.user     # Qt Creator 本机配置（含 C:\Qt\... 绝对路径，不应提交）
 ├── main.cpp                # 入口：从 qrc 读 QSS 并 a.setStyleSheet()，再显示 MainWindow
 ├── mainwindow.h/.cpp       # 主窗口：CAN 启停、帧解析、UI 刷新、MQTT 收发、日志、快照导出
 ├── mainwindow.ui           # Designer 界面（约 1400 行，深色中控多栏布局）
@@ -92,7 +91,7 @@ v_car/
 | 结构体 | 字段 | 注释含义 |
 | --- | --- | --- |
 | `s_bmsdata` | `batterySoc` | 0~100 电量百分比 |
-| `s_vcudata` | `vcuSpeed`、`vcuTemp` | 车速 0~180；温度 -40~150 ℃（注：`fromJson` 只还原 `vcuSpeed`，漏了温度） |
+| `s_vcudata` | `vcuSpeed`、`vcuTemp` | 车速 0~180；温度 -40~150 ℃ |
 | `s_bcmdata` | `door_status`（bit0-3 左前/右前/左后/右后，1=关门）、`air_con_status`（bit0 开关、bit1 制冷、bit2 制热）、`air_temperature` | 车门位图 + 空调模式位图 + 设定温度 |
 | `s_dtcdata` | `guzhangma`、`youxianji` | 故障码（0=无故障）；优先级 0 无 / 1 警告(橙) / 2 严重(红) |
 
@@ -166,7 +165,7 @@ cmake --build build -j
 ./build/vehicle_gateway
 ```
 
-产物名为 `vehicle_gateway`（**不是** `v_car`），工程已设 `WIN32_EXECUTABLE TRUE`、`MACOSX_BUNDLE TRUE`。运行前提：`8.138.233.135:1883` 上的 Broker 可达（上行发布与下行 `phone/cmd` 都依赖它）；手机端 App 不在本仓库，用 MQTTX / mosquitto_pub 发 JSON 即可验证下行链路。
+产物名为 `vehicle_gateway`，工程已设 `WIN32_EXECUTABLE TRUE`、`MACOSX_BUNDLE TRUE`。运行前提：`8.138.233.135:1883` 上的 Broker 可达（上行发布与下行 `phone/cmd` 都依赖它）；手机端 App 不在本仓库，用 MQTTX / mosquitto_pub 发 JSON 即可验证下行链路。
 
 ## 八、技术栈与技术亮点
 
@@ -178,49 +177,3 @@ cmake --build build -j
 - **QMQTT 而非 QtMqtt**：MQTT 走社区第三方库 QMQTT（静态编译），代码中没有手写 CONNECT/PUBLISH 字节流；好处是不必安装 Qt 官方 QtMqtt 附加模块，代价是仓库需额外携带 `qmqtt` 源码。
 - **QSS 主题工程化**：270 行样式表全部基于 objectName/id 选择器，颜色统一为背景 `#0F1726`、卡片 `#172238`、成功 `#10B981`、异常 `#EF4444`，状态色由 C++ 端 `setStyleSheet("color: …")` 覆盖。
 - **JSON 直出**：`vehicledata.h` 中每个结构体都有成对的 `toJson()`/`fromJson()`，CAN 信号 → 结构体 → JSON 的转换集中一处，MQTT 层无需关心字段。
-
-## 九、典型问题与注意事项
-
-### 9.1 构建与依赖
-
-- **缺 `qmqtt/` 目录，configure 直接失败**：`CMakeLists.txt` 检查 `${CMAKE_CURRENT_SOURCE_DIR}/qmqtt/CMakeLists.txt`，缺失即 `FATAL_ERROR("未找到 QMQTT 源码")`。需自行把 QMQTT 源码放到仓库根 `qmqtt/`。
-- **缺 `image/logo.svg`，AUTORCC 会报错**：`res.qrc` 声明了 `<file>image/logo.svg</file>`，仓库里没有 `image/` 目录；且代码与 `.ui` 均未使用该图标（`<resources/>` 为空），可从 `res.qrc` 删除。
-- **`CMakeLists.txt.user` 不应提交**：Qt Creator 本地配置，含本机绝对路径（如 `C:\Qt\code\vehicle_gateway\build\Desktop_Qt_6_11_1_MinGW_64_bit-Debug`）与本机 Kit id，换机即失效，建议删除并加入 `.gitignore`。
-- **Qt5 兼容写法有名无实**：`find_package(QT NAMES Qt6 Qt5 …)` 声称双兼容，但 `mainwindow.cpp` 用了 `QJsonObject::toInteger()`（Qt 6 引入），Qt5 下无法编译，实际按 Qt6 使用。
-- **声明未用的依赖**：`Svg`/`SvgWidgets` 已链接、`QSvgRenderer`/`QPixmap`/`QPainter` 已 include，但全代码无任何 SVG 渲染或绘图调用；`MQTT_PROJECT_INCLUDE_SRC` 宏已定义却未在源码出现。
-
-### 9.2 功能未闭环（规划中）
-
-- **BCM 下发回路未闭环**：把手机指令写回 `0x200` 的 `writeFrame` 整段被注释（原 `mainwindow.cpp` 第 489~503 行），`BcmECU` 中 `door/air_con/air_temperature` 为 `static` 且从不修改，故车门/空调永远上报 `0/0/24`，手机指令只改主窗口本地副本。
-- **故障注入未实现**：`DtcECU` 的故障码与优先级恒为 0，界面永远「无故障活动 / 系统自检通过」。QSS 为 `btn_guzhangmoni`（故障模拟）预留了红色按钮样式，但 `.ui` 无该控件、也无对应槽。
-- **真实车辆模式仅 UI 占位**：`radiobtn_zhenshicheliang` 未接任何槽，切换无效果。
-- **SOC 只会单向下滑**：`QRandomGenerator::bounded(-1, 1)` 区间为 `[-1, 1)`，只能取 -1 或 0，SOC 从 80 缓慢减到 0 后不再变化。
-- **`s_vcudata::fromJson()` 漏读 `vcuTemp`**：回读结构体时温度为 0，若将来做双向数据流需补齐。
-
-### 9.3 健壮性与实现细节
-
-- **MQTT 无重连、UI 状态先行**：`on_btn_mqttlianjie_clicked()` 在真正 `connectToHost()` 之前就把状态标签置绿、把按钮 `setEnabled(false)`；`onDisconnected()` 只打日志，无重连逻辑，断开后界面仍显示「已连接」且按钮不可再点，只能重启程序。
-- **波特率文案不一致**：`BitRateKey` 设为 `5000`（5 kbit/s，界面标签也是 5kbit/s），启动日志却写死 `CAN已启动 波特率1kbit/s`；失败分支提示 `Check socketcan plugin` 也是遗留文案（实际用 `virtualcan`）。
-- **发布/订阅计数不精确**：`label_mqttfabuxiaoxi` 在调用 `send*Info()` 之后无条件自增，而 `send*Info()` 未连接时直接 `return`，故「已连接又掉线」窗口期计数虚高。
-- **全局静态状态**：`m_countfasong`、`m_countdingyue`、`m_fps` 是 `mainwindow.cpp` 的文件级 `static` 变量（带 `m_` 前缀却非成员），窗口重建不会复位。
-- **快照导出只写一次**：每次点击都新建 `carstatus_*.txt` 并写入当次状态，`m_logFile` 存为成员但之后无人再写；重复点击还会泄漏上一个 `QFile` 句柄，默认目录 `%1../../../car_state_log` 是相对 `QDir::currentPath()` 拼接，未必存在。
-- **`updateBcmUi()` 借用日志控件**：BCM 状态被写进 `listWidgetcan` 最后一行（`setText` 覆盖），会顶掉真正的报文日志。
-- **`parseCanFrame()` 健壮性**：payload 不足 8 字节只 `qDebug` 丢弃；未识别帧 ID 走 `default` 静默忽略；`m_fps += 47 + 8 * payload.size()` 是粗略估算（固定 47 bit 开销），且在长度检查之前就累加。
-- **进度条与温度量程**：`progressBar_2` 量程 -40~150，代码按 `vcuTemp` 直接 `setValue()`，负温度时填充比例视觉偏低；`progressBar_3` 未在代码中校验 0~100 越界。
-- **单实例假设**：Client ID 固定 `vehicle`，同一 Broker 多开互相顶下线；用户名/密码为空，明文 1883 端口。
-- **源码无 `TODO`/`FIXME` 标记**：未完成部分统一以「注释掉的代码块」遗留（9.2 的前两条即此类），后续改造时建议统一改成显式的占位注释。
-
-## 十、相关仓库与备注
-
-| 仓库 | 角色 | 说明 |
-| --- | --- | --- |
-| [collecton_node](https://github.com/YumK00/collecton_node) | CAN 节点 A | STM32F103 采集节点，负责传感器数据采集与上报 |
-| [control_node](https://github.com/YumK00/control_node) | CAN 节点 B | STM32F103 执行节点，接收控制指令驱动执行机构 |
-| [gateway_node](https://github.com/YumK00/gateway_node) | 边缘网关 | ESP32-S3，CAN ⇄ MQTT 协议转换，把总线数据经 WiFi 上云 |
-| [weather_bureau](https://github.com/YumK00/weather_bureau) | Linux C++ 上位机 | 气象数据平台，服务端 / 数据处理方向 |
-| **v_car（本仓库）** | 车载 T-Box 仿真 + 中控界面 | 用 Qt 虚拟 CAN 总线替代真实硬件，独立演示「ECU → CAN → 报文解析 → MQTT → 中控界面」链路，是作品集里的桌面端项目 |
-
-- 与 `gateway_node` 的关系：两者**不是同一条链路**，也没有共用 Broker——本仓库是车载域的自有主题树（`car/ecu/*`、`phone/cmd`，Broker `8.138.233.135:1883`），网关是工业域的 `gw0805/*`（Broker `broker.emqx.io`）。可复用的是**同一套软件套路**：手写 CAN 帧的字节级解析 + 变化触发上云 + 用主题承载命令类型，因此本仓库可以作为网关项目的桌面演示工装，但不能直接与真实网关互连。
-- 手机端 App 未包含在本仓库，「手机中控」由桌面 GUI 呈现，下行指令用任意 MQTT 客户端模拟即可。
-- 明确标注**规划中**的部分：BCM 指令回写 CAN（`0x200` 下发）、故障注入按钮与对应 ECU 行为、真实车辆模式（`radiobtn_zhenshicheliang` 未接任何槽，仅 UI 占位）、MQTT 断线自动重连、SVG 图标/绘图资源的使用。
-- 提交前建议：删除 `CMakeLists.txt.user`、补齐 `qmqtt/` 或改用 QtMqtt、处理 `res.qrc` 中缺失的 `image/logo.svg`，并补 `.gitignore`（`build/`、`*.user`）。
